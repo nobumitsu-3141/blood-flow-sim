@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>血流シミュレーター — 前進波・反射波と脈波の成り立ち</title>
+<style>
+  :root{
+    --bg:#0a0e16; --panel:#121826; --panel2:#0e1421; --ink:#e8eef7; --muted:#90a0b8;
+    --line:#22304a; --accent:#ffe14d;
+    --fwd:#ff7a3c;     /* 前進波 */
+    --bwd:#3cc8ff;     /* 反射波 */
+    --sum:#ffe14d;     /* 合成（実測脈波） */
+    --flow:#7cffb0;    /* 流量 */
+    --vessel:#b3324a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(1200px 800px at 70% -10%, #15203a 0%, var(--bg) 55%);
+    color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    overflow:hidden;
+  }
+  #app{display:grid; grid-template-columns: 1.15fr 1fr; grid-template-rows: 1fr auto; height:100vh; gap:8px; padding:8px;}
+  @media (max-width:980px){
+    body{overflow:auto}
+    #app{grid-template-columns:1fr; grid-template-rows:auto auto auto; height:auto; min-height:100vh;}
+    #stage{height:44vh}
+    #analysis{height:auto}
+    #analysis .panel{min-height:250px}
+  }
+
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line); border-radius:14px; position:relative; overflow:hidden;}
+  #stage{grid-row:1 / span 1; grid-column:1; min-height:0;}
+  #scene{width:100%; height:100%; display:block;}
+  #analysis{grid-row:1 / span 1; grid-column:2; display:flex; flex-direction:column; min-height:0;}
+  @media (max-width:980px){ #stage{grid-row:1; grid-column:1} #analysis{grid-row:2; grid-column:1} }
+
+  #controls{grid-row:2; grid-column:1 / span 2; padding:10px 14px; display:flex; flex-wrap:wrap; gap:14px 22px; align-items:flex-end;}
+  @media (max-width:980px){ #controls{grid-row:3} }
+
+  h1{font-size:14px; margin:0; font-weight:700; letter-spacing:.02em}
+  .sub{color:var(--muted); font-size:11px}
+
+  /* stage overlays */
+  .overlay{position:absolute; pointer-events:none; left:0; top:0; right:0; bottom:0;}
+  .tag{position:absolute; transform:translate(-50%,-130%); font-size:11px; font-weight:700; color:#fff;
+       background:rgba(8,12,20,.72); border:1px solid var(--line); padding:2px 7px; border-radius:999px; white-space:nowrap;
+       box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  .tag.heart{border-color:#ff6a6a} .tag.finger{border-color:var(--bwd)} .tag.refl{border-color:#ffd166} .tag.head{border-color:#ff9e6a}
+  .views{position:absolute; right:12px; top:42px; display:flex; gap:5px; pointer-events:auto; background:rgba(8,12,20,.55); padding:5px 7px; border-radius:9px; border:1px solid var(--line)}
+  .viewbtn{background:#16203a; color:var(--ink); border:1px solid var(--line); border-radius:7px; padding:4px 8px; font-size:11px; cursor:pointer}
+  .viewbtn:hover{border-color:var(--accent)} .viewbtn.on{background:var(--accent); color:#10131a; border-color:var(--accent); font-weight:700}
+  .legend{position:absolute; left:12px; top:10px; display:flex; gap:14px; flex-wrap:wrap; font-size:11px; pointer-events:none}
+  .legend b{display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:-1px; margin-right:5px}
+  .hint{position:absolute; right:12px; bottom:10px; font-size:10.5px; color:var(--muted); text-align:right; pointer-events:none}
+  .stagetitle{position:absolute; left:12px; bottom:10px; font-size:11px; color:var(--muted)}
+
+  /* analysis panels */
+  .panel{flex:1; display:flex; flex-direction:column; min-height:0; padding:8px 10px 4px;}
+  .panel + .panel{border-top:1px solid var(--line)}
+  .ptitle{font-size:12px; font-weight:700; margin:0 0 2px; display:flex; gap:8px; align-items:baseline}
+  .ptitle small{font-weight:400; color:var(--muted); font-size:10.5px}
+  .sites{display:inline-flex; gap:4px; margin:0 4px}
+  .sitebtn{background:#16203a; color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:2px 7px; font-size:10.5px; cursor:pointer}
+  .sitebtn:hover{border-color:var(--accent)} .sitebtn.on{background:var(--bwd); color:#06121a; border-color:var(--bwd); font-weight:700}
+  canvas.plot{width:100%; flex:1; min-height:0; display:block}
+  .metrics{display:flex; gap:8px 16px; flex-wrap:wrap; font-size:11px; padding:2px 0 0; color:var(--muted)}
+  .metrics b{color:var(--ink)}
+  .transport{display:flex; gap:8px; align-items:center; padding:6px 0 2px; flex-wrap:wrap}
+  .tbtn{background:#16203a; color:var(--ink); border:1px solid var(--line); border-radius:7px; padding:3px 9px; font-size:11px; cursor:pointer; font-weight:600}
+  .tbtn:hover{border-color:var(--accent)}
+  .tlab{font-size:10.5px; color:var(--muted); display:flex; gap:4px; align-items:center}
+  .scrub{flex:1; min-width:80px; accent-color:var(--bwd); cursor:pointer}
+  .pill{padding:1px 8px; border-radius:999px; font-size:10.5px; font-weight:700}
+  .pill.sys{background:rgba(255,122,60,.18); color:#ffb38c; border:1px solid #5a3320}
+  .pill.dia{background:rgba(60,200,255,.16); color:#9fe0ff; border:1px solid #1f4658}
+
+  /* controls */
+  .ctl{display:flex; flex-direction:column; gap:3px; min-width:140px}
+  .ctl label{font-size:11px; color:var(--muted); display:flex; justify-content:space-between; gap:8px}
+  .ctl label b{color:var(--ink); font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%; accent-color:var(--accent); cursor:pointer}
+  .presets{display:flex; gap:6px; flex-wrap:wrap}
+  button.pre{background:#16203a; color:var(--ink); border:1px solid var(--line); border-radius:9px; padding:6px 10px; font-size:11px; cursor:pointer; font-weight:600}
+  button.pre:hover{border-color:var(--accent)}
+  button.pre.active{background:var(--accent); color:#10131a; border-color:var(--accent)}
+  .checks{display:flex; gap:14px; align-items:center; font-size:11px; color:var(--muted)}
+  .checks label{display:flex; gap:5px; align-items:center; cursor:pointer}
+  .sep{width:1px; align-self:stretch; background:var(--line)}
+
+  /* info modal */
+  #infoBtn{position:absolute; right:12px; top:10px; pointer-events:auto; z-index:5; background:#16203a; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:4px 9px; font-size:11px; cursor:pointer}
+  #infoBtn:hover{border-color:var(--accent)}
+  #info{position:fixed; inset:0; background:rgba(4,7,12,.7); display:none; z-index:50; align-items:center; justify-content:center; padding:20px}
+  #info.show{display:flex}
+  #info .box{max-width:720px; max-height:84vh; overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px 24px; line-height:1.6; font-size:13px}
+  #info h2{margin:0 0 8px; font-size:16px}
+  #info h3{margin:16px 0 4px; font-size:13px; color:var(--accent)}
+  #info p,#info li{color:#cdd8ea}
+  #info code{background:#0c1320; padding:1px 5px; border-radius:5px; color:#ffd}
+  #info .close{float:right; cursor:pointer; color:var(--muted); font-size:20px; line-height:1}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:0}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 3D STAGE -->
+  <div class="card" id="stage">
+    <canvas id="scene"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="legend">
+        <span><b style="background:var(--fwd)"></b>前進波（心臓→末梢）</span>
+        <span><b style="background:var(--bwd)"></b>反射波（末梢→心臓）</span>
+        <span><b style="background:#8a2b3e"></b>血液（ゆっくり前進）</span>
+      </div>
+      <button id="infoBtn">解説 / 物理の中身 ⓘ</button>
+      <div class="views">
+        <span style="color:var(--muted);font-size:10px;align-self:center">視点:</span>
+        <button class="viewbtn on" data-v="all">全体</button>
+        <button class="viewbtn" data-v="heart">心臓</button>
+        <button class="viewbtn" data-v="head">頭</button>
+        <button class="viewbtn" data-v="legs">脚</button>
+        <button class="viewbtn" data-v="finger">指先にズーム</button>
+      </div>
+      <div class="tag heart" id="tagHeart">心臓（拍出）</div>
+      <div class="tag head" id="tagHead">頭（脳）</div>
+      <div class="tag finger" id="tagFinger">指先 SpO₂</div>
+      <div class="tag refl" id="tagRefl">主要反射部位<br><span style="font-weight:400;color:var(--muted)">（下半身・分岐・細動脈）</span></div>
+      <div class="hint">ドラッグ=回転 / ホイール=ズーム</div>
+      <div class="stagetitle">透明血管：明るく光る帯が「圧の波」。波は速い（数 m/s）が、暗い血球はゆっくり（~0.3 m/s）。</div>
+    </div>
+  </div>
+
+  <!-- 2D ANALYSIS -->
+  <div class="card" id="analysis">
+    <div class="panel">
+      <p class="ptitle">① 血管に沿った圧分布 <small>横軸=心臓からの距離 → 指先 / 今この瞬間の波の位置</small></p>
+      <canvas class="plot" id="plotSpace"></canvas>
+    </div>
+    <div class="panel">
+      <p class="ptitle">② 脈波 — 測定部位:
+        <span class="sites">
+          <button class="sitebtn" data-x="0.05">大動脈基部</button>
+          <button class="sitebtn" data-x="0.45">上腕</button>
+          <button class="sitebtn on" data-x="0.70">指先 SpO₂</button>
+        </span>
+        <small>前進波＋反射波＝実測脈波（中枢→末梢で増幅）</small></p>
+      <canvas class="plot" id="plotTime"></canvas>
+      <div class="metrics" id="metrics"></div>
+      <div class="transport">
+        <button id="tPlay" class="tbtn">⏸ 停止</button>
+        <button id="tStepB" class="tbtn" title="10ms戻す">◀</button>
+        <button id="tStepF" class="tbtn" title="10ms進める">▶</button>
+        <span class="tlab">1拍をスクラブ →</span>
+        <input id="scrub" type="range" min="0" max="1000" value="0" step="1" class="scrub">
+        <label class="tlab"><input type="checkbox" id="ckAnno" checked> 注釈</label>
+        <span class="tlab" style="opacity:.8">｜波形上をホバー=計測 / クリック=ピン(2点でΔ)</span>
+        <button id="tClear" class="tbtn">計測クリア</button>
+        <button id="tSnap" class="tbtn" title="今の波形を重ねて保存(最大2本)">📌 波形を重ねる</button>
+        <button id="tSnapClear" class="tbtn">比較クリア</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="card" id="controls">
+    <div style="display:flex;flex-direction:column;gap:6px;min-width:150px">
+      <h1>血流シミュレーター</h1>
+      <span class="sub">前進波・反射波の合成と脈波形成</span>
+      <div class="presets" id="presets">
+        <button class="pre" data-p="young">若年・健常</button>
+        <button class="pre" data-p="mid">中年</button>
+        <button class="pre" data-p="old">高齢・動脈硬化</button>
+        <button class="pre" data-p="vaso">血管拡張（敗血症型）</button>
+        <button class="pre" data-p="hypo">出血・低容量</button>
+        <button class="pre" data-p="exer">運動・高拍出</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="ctl"><label>心拍数 HR <b><span id="vHR">70</span> bpm</b></label><input id="HR" type="range" min="40" max="140" step="1" value="70"></div>
+    <div class="ctl"><label>動脈硬化（脈波伝播速度 PWV） <b><span id="vPWV">7.0</span> m/s</b></label><input id="PWV" type="range" min="4" max="14" step="0.1" value="7"></div>
+    <div class="ctl"><label>反射の強さ Γ（末梢抵抗・血管トーン） <b><span id="vG">0.60</span></b></label><input id="G" type="range" min="0" max="0.9" step="0.01" value="0.6"></div>
+    <div class="ctl"><label>反射部位までの距離（体格） <b><span id="vD">0.55</span> m</b></label><input id="D" type="range" min="0.35" max="0.75" step="0.01" value="0.55"></div>
+    <div class="ctl"><label>1回拍出 / 収縮力（振幅） <b><span id="vSV">100</span> %</b></label><input id="SV" type="range" min="40" max="160" step="1" value="100"></div>
+    <div class="ctl"><label>駆出時間 <b><span id="vTej">300</span> ms</b></label><input id="Tej" type="range" min="180" max="360" step="5" value="300"></div>
+    <div class="ctl"><label>近位反射 Γ近位（再反射の強さ） <b><span id="vGp">0.70</span></b></label><input id="Gp" type="range" min="0" max="0.9" step="0.01" value="0.7"></div>
+    <div class="sep"></div>
+    <div class="ctl"><label>再生速度（スロー） <b><span id="vSpd">0.20</span>×</b></label><input id="Spd" type="range" min="0.02" max="1" step="0.01" value="0.2"></div>
+    <div class="checks">
+      <label><input type="checkbox" id="ckWK" checked> 拡張期圧（<span class="sw" style="background:#7a8aa6"></span> Windkessel貯留）</label>
+      <label><input type="checkbox" id="ckFlow"> 流量も表示（<span class="sw" style="background:var(--flow)"></span> 圧は加算・流量は減算）</label>
+      <label><input type="checkbox" id="ckBlood" checked> 血球を流す</label>
+      <label><input type="checkbox" id="ckMulti"> 再反射（多重反射）</label>
+      <label><input type="checkbox" id="ckECG" checked> ECG</label>
+      <label><input type="checkbox" id="ckRot"> 自動回転</label>
+    </div>
+  </div>
+</div>
+
+<!-- INFO -->
+<div id="info"><div class="box">
+  <span class="close" id="infoClose">×</span>
+  <h2>このシミュレーターの中身（臨床的な背景）</h2>
+  <p>心臓が収縮すると、大動脈起始部に<b style="color:var(--fwd)">前進波（順行性の圧の波）</b>が生まれ、末梢へ伝わります。波は分岐部・口径変化・細動脈の高抵抗などで一部が<b style="color:var(--bwd)">反射波（後進波）</b>として心臓側へ戻ります。任意の場所で測れる脈波は <b>前進波 ＋ 反射波</b> の重ね合わせです。</p>
+
+  <h3>1. 波の速度と血流の速度は別物</h3>
+  <p>圧の波（PWV）は数〜十数 m/s で伝わりますが、血液そのものは ~0.2–0.5 m/s とずっと遅い。3D画面で「明るい帯（波）」は速く走り、「暗い血球」はゆっくり進むのはこのためです。</p>
+
+  <h3>2. 圧は足し算、流量は引き算</h3>
+  <p>反射波は <b>圧を上げる一方で流量を減らす</b>方向に働きます（後進する波だから流れには逆向き）。だから測定圧 <code>P = P前進 + P反射</code> に対し、流量 <code>Q ∝ P前進 − P反射</code>。「流量も表示」で確認できます。これが波形分離法（wave separation）の基本です。</p>
+
+  <h3>3. 反射が「いつ」戻るかで波形が決まる</h3>
+  <p>反射波が指先に戻るまでの遅れ ≈ <code>2 × 反射部位距離 ÷ PWV</code>。</p>
+  <ul>
+    <li><b style="color:#9fe0ff">拡張期に戻る</b>（若年・しなやかな血管）→ 収縮期ピークの後に <b>くぼみ（dicrotic notch）＋拡張期の山</b>。冠動脈灌流に有利。AIx 低い。</li>
+    <li><b style="color:#ffb38c">収縮期に戻る</b>（高齢・動脈硬化で PWV↑）→ 収縮期ピーク自体を押し上げる（<b>augmentation</b>）。後負荷↑・AIx↑。</li>
+  </ul>
+
+  <h3>反射は「1回」ではない（再反射／多重反射）</h3>
+  <p>実際の反射は1回・1点では終わりません。① 分岐部・口径変化・無数の細動脈床が<b>分布した反射源</b>で（「主要反射部位」はその重心を1点に集約した近似）、② 末梢で戻った波は<b>近位端（拡張期は閉じた大動脈弁＝強い反射体）で再び前向きに跳ね返り</b>、末梢↔近位を <code>Γ×Γ近位</code> を掛けながら減衰しつつ往復します。これが拡張期の小さなさざ波（2次・3次波）になります。本シミュレーターは既定では見やすさ優先で<b>単一反射</b>ですが、「再反射（多重反射）」にチェックすると、1往復ごとに <code>2×反射部位距離÷PWV</code> 遅れ・振幅が <code>Γ×Γ近位</code> 倍に減衰する反射列が加わります。臨床で主役なのは最初の末梢反射ですが、その後ろに続く再反射が本当の姿です。</p>
+
+  <h3>4. SpO₂（脈波・PPG）との関係</h3>
+  <p>パルスオキシメータは指先の容積脈波（PPG）を見ています。その「収縮期ピーク→くぼみ→拡張期の山」という典型波形は、まさに前進波と反射波の合成。動脈が硬いほどくぼみが浅く・山が前にずれます。</p>
+
+  <h3>波形の読み方・操作</h3>
+  <ul>
+    <li><b>注釈</b>: ②に <b style="color:#ffae7a">P1（前進波ピーク）</b>・<b style="color:#8fd9ff">P2（反射波ピーク）</b>・<b>Δt（反射の遅れ＝2×反射部位距離÷PWV）</b>・拡張期反射では <b>dicrotic notch</b> を表示。</li>
+    <li><b>スロー再生</b>: ⏸/▶・コマ送り・「1拍をスクラブ」で1拍の中を自由に行き来し、前進波の到達と反射波の合成を1コマずつ追えます（最遅 0.02×）。</li>
+    <li><b>フリーズ計測</b>: 波形上をホバーで時刻・合成圧・前進/反射成分を読み取り、クリックで2点ピン→<b>Δt・ΔP</b>（モニタのキャリパー風）。①の圧分布上でもホバー計測可。</li>
+    <li><b>測定部位</b>: 大動脈基部／上腕／指先 を切替。<b>中枢→末梢でSBP・脈圧が増幅</b>（拡張期圧はほぼ一定）する現象が見えます（インピーダンステーパの近似）。①に「②計測点」を表示。</li>
+    <li><b>ECG</b>: R波 ≈ 駆出開始。電気的興奮→駆出→脈波の伝播の時間差（脈波伝播時間）が分かります。</li>
+    <li><b>波形を重ねる</b>: 今の波形を最大2本ゴースト保存。若年↔高齢などを<b>重ねて比較</b>（位相で整列）。</li>
+    <li><b>視点</b>: 全体／心臓／頭／脚／指先にズーム。自動回転も可。</li>
+  </ul>
+
+  <h3>近似と限界</h3>
+  <p>教育目的のため、反射は実効的な単一反射部位に集約し、Windkessel の拡張期ランオフなどは簡略化しています。<b>頭（脳）への上行・脳血管からの反射は3Dの可視化用</b>で、指先の波形計算には主要反射部位（下半身）の反射のみを用いています（脳は低抵抗で反射が小さいため）。波形の「形と成り立ち」を直感的に掴むためのモデルで、個別の数値予測用ではありません。</p>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ============================================================
+   血流シミュレーター
+   - 3D: 透明血管 / 拍動する心臓 / 前進波・反射波のパケット / 血球
+   - 2D: ①血管に沿った圧分布  ②指先の脈波(前進+反射=合成)
+   物理:  Pf(x,t)=g(t - x/c)               前進波
+          Pb(x,t)=Γ g(t - (2D + x)/c)      反射波(実効反射部位 D で反射)
+          P = Pf + Pb (圧)   Q ∝ Pf - Pb (流量)
+   ============================================================ */
+'use strict';
+
+/* ---------- パラメータ ---------- */
+const P = {
+  HR:70, PWV:7, Gamma:0.6, D:0.55, SV:1.0, Tej:0.30,
+  Larm:0.70,            // 心臓→指先 経路長(実効, m)
+  dBranch:0.12,         // 心臓→腕分岐(鎖骨下)までの距離(m)
+  Lhead:0.30,           // 心臓→脳 経路長(実効, m)
+  dHeadBranch:0.10,     // 心臓→頸動脈分岐までの距離(m)
+  Lleg:0.95,            // 腸骨分岐→足 経路長(実効, m, 可視化用)
+  speed:0.20,           // 再生速度
+  showFlow:false, showBlood:true, paused:false, showWK:true, showAnno:true, multi:false,
+  measX:0.70, showECG:true, gammaProx:0.7, autorot:false
+};
+const mod=(a,n)=>((a%n)+n)%n;
+
+/* 1拍あたりの駆出波形 g(τ): 収縮期のみの拍出パルス(半正弦をやや前傾, 振幅~SV) */
+function g(tau){
+  const T=60/P.HR;
+  const Tej=Math.min(P.Tej, 0.45*T);
+  const ph=mod(tau,T);
+  if(ph<Tej){
+    const s=ph/Tej;                 // 0..1
+    return P.SV*Math.pow(Math.sin(Math.PI*s),1.6);
+  }
+  return 0;
+}
+const cPWV=()=>P.PWV;
+/* 動脈硬化(PWV)に連動する量: 特性インピーダンス Zc∝PWV → 前進波振幅↑ */
+const AMP=()=>26*Math.pow(P.PWV/7,0.7);          // excess圧の振幅係数(mmHg目安)
+
+/* --- 生(無次元)波: glow用 (ピーク~SV) --- */
+function gf(x,t){ return g(t - x/cPWV()); }                       // 前進
+/* 反射: 単一反射(既定) または 減衰しながら往復する多重反射(P.multi) */
+function gb(x,t){
+  const c=cPWV(), base=(2*P.D+x)/c, rt=2*P.D/c;
+  const N=P.multi?4:0; let s=0, amp=P.Gamma;
+  for(let n=0;n<=N;n++){ s+=amp*g(t-base-n*rt); amp*=P.Gamma*P.gammaProx; }
+  return s;
+}
+/* 末梢へ向かう脈圧の増幅(インピーダンステーパ): 末梢ほど振幅大。指先(Larm)で較正一致 */
+const KTAP=0.55;
+function AMPloc(x){ return AMP()*(1+KTAP*x)/(1+KTAP*P.Larm); }
+
+/* --- mmHg目安の excess圧(reservoirに乗る波成分) --- */
+function Pfwd(x,t){ return AMPloc(x)*gf(x,t); }
+function Pbwd(x,t){ return AMPloc(x)*gb(x,t); }
+
+/* --- Windkessel(貯留)圧: 全動脈でほぼ一様な拡張期ベースライン ---
+   dP/dt = (Qin/C - (P-Pv)/(R)) ,  C∝1/PWV²(硬いほど脈圧↑), R∝血管トーンΓ */
+let wkArr=null, wkPeriod=1, wkDirty=true;
+function computeWK(){
+  const T=60/P.HR, M=600, dt=T/M;
+  const C=0.5*Math.pow(7/P.PWV,0.9);   // コンプライアンス
+  const R=4.0*(0.5+P.Gamma);           // 末梢抵抗(SVR)
+  const Pv=12, Gin=92;                 // 静脈圧 / 流入ゲイン
+  let p=80;
+  for(let cyc=0;cyc<16;cyc++) for(let i=0;i<M;i++){ p+=(g(i*dt)*Gin-(p-Pv)/R)/C*dt; }
+  wkArr=new Float32Array(M+1);
+  for(let i=0;i<=M;i++){ p+=(g((i%M)*dt)*Gin-(p-Pv)/R)/C*dt; wkArr[i]=p; }
+  wkPeriod=T; wkDirty=false;
+}
+function wk(t){
+  if(!P.showWK) return 0;
+  if(wkDirty||!wkArr) computeWK();
+  const M=wkArr.length-1; const ph=mod(t,wkPeriod)/wkPeriod*M;
+  const i=Math.floor(ph), f=ph-i; return wkArr[i]*(1-f)+wkArr[Math.min(i+1,M)]*f;
+}
+/* --- 合成(実測)圧 と 流量(excessのみ, 任意単位) --- */
+function Ptot(x,t){ return wk(t)+Pfwd(x,t)+Pbwd(x,t); }
+function Qflow(x,t){ return Pfwd(x,t)-Pbwd(x,t); }   // 圧は加算・流量は減算
+
+/* ============================================================
+   2D プロット
+   ============================================================ */
+const cvSpace=document.getElementById('plotSpace');
+const cvTime =document.getElementById('plotTime');
+const ctxS=cvSpace.getContext('2d');
+const ctxT=cvTime.getContext('2d');
+function fit(cv){ const r=cv.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1);
+  cv.width=Math.max(10,r.width*dpr); cv.height=Math.max(10,r.height*dpr);
+  const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0); return {w:r.width,h:r.height}; }
+
+const COL={fwd:'#ff7a3c',bwd:'#3cc8ff',sum:'#ffe14d',flow:'#7cffb0',grid:'#1d2740',ax:'#3a4a68',mut:'#90a0b8'};
+
+/* ---- ① 空間プロット: 圧 vs 距離(心臓→指先), 今この瞬間 ---- */
+function drawSpace(tNow){
+  const {w,h}=fit(cvSpace); ctxS.clearRect(0,0,w,h);
+  const padL=30,padR=10,padT=10,padB=22;
+  const x0=padL,x1=w-padR,y0=h-padB,y1=padT;
+  const ymin=0, ymax=P.showWK?180:AMP()*(1+P.Gamma)*1.15+5;
+  const X=d=> x0+(d/P.Larm)*(x1-x0);
+  const Y=v=> y0+((v-ymin)/(ymax-ymin))*(y1-y0);
+  lastSpacePlot={x0,x1,Larm:P.Larm};
+  // grid + 目盛(mmHg)
+  ctxS.strokeStyle=COL.grid; ctxS.lineWidth=1; ctxS.fillStyle=COL.mut; ctxS.font='9px sans-serif'; ctxS.textAlign='right';
+  const ticks=P.showWK?[0,40,80,120,160]:[0];
+  for(const tk of ticks){ if(tk>ymax)continue; const py=Y(tk); ctxS.beginPath(); ctxS.moveTo(x0,py); ctxS.lineTo(x1,py); ctxS.stroke(); ctxS.fillText(tk,x0-4,py+3); }
+  // 指先マーカー
+  ctxS.strokeStyle='rgba(60,200,255,.5)'; ctxS.setLineDash([4,4]);
+  ctxS.beginPath(); ctxS.moveTo(X(P.Larm),y1); ctxS.lineTo(X(P.Larm),y0); ctxS.stroke(); ctxS.setLineDash([]);
+  const N=240;
+  const plot=(fn,color,lw)=>{ ctxS.beginPath();
+    for(let i=0;i<=N;i++){ const d=i/N*P.Larm; const v=fn(d); const px=X(d),py=Y(v);
+      i?ctxS.lineTo(px,py):ctxS.moveTo(px,py);} ctxS.strokeStyle=color; ctxS.lineWidth=lw; ctxS.stroke(); };
+  if(P.showWK){ ctxS.setLineDash([3,3]); plot(()=>wk(tNow),'#7a8aa6',1.2); ctxS.setLineDash([]); }
+  plot(d=>Pfwd(d,tNow)+(P.showWK?wk(tNow):0),COL.fwd,1.5);
+  plot(d=>(P.showWK?wk(tNow):0)+Pbwd(d,tNow),COL.bwd,1.5);
+  plot(d=>Ptot(d,tNow),COL.sum,2.6);
+  // 計測部位マーカー(②で見ている場所)
+  if(P.measX<=P.Larm){ const mx=X(P.measX); ctxS.strokeStyle='rgba(159,224,255,.9)'; ctxS.setLineDash([2,2]);
+    ctxS.beginPath(); ctxS.moveTo(mx,y1); ctxS.lineTo(mx,y0); ctxS.stroke(); ctxS.setLineDash([]);
+    ctxS.fillStyle='#9fe0ff'; ctxS.font='9px sans-serif'; ctxS.textAlign='center'; ctxS.fillText('②計測点',mx,y1+8); }
+  // フリーズ計測(ホバー読み取り)
+  if(measSX!=null){ const px=X(measSX); const v=Ptot(measSX,tNow);
+    ctxS.strokeStyle='#fff'; ctxS.setLineDash([]); ctxS.lineWidth=1; ctxS.beginPath(); ctxS.moveTo(px,y1); ctxS.lineTo(px,y0); ctxS.stroke();
+    ctxS.fillStyle=COL.sum; ctxS.beginPath(); ctxS.arc(px,Y(v),3,0,7); ctxS.fill();
+    const txt=measSX.toFixed(2)+'m  '+v.toFixed(0)+(P.showWK?'mmHg':''); ctxS.font='10px sans-serif';
+    const tw=ctxS.measureText(txt).width+10; let bx=px+6; if(bx+tw>x1)bx=px-tw-6;
+    ctxS.fillStyle='rgba(10,14,22,.9)'; ctxS.strokeStyle='#3a4a68'; ctxS.beginPath(); ctxS.rect(bx,y1+2,tw,16); ctxS.fill(); ctxS.stroke();
+    ctxS.fillStyle='#cdd8ea'; ctxS.textAlign='left'; ctxS.fillText(txt,bx+5,y1+13); }
+  // labels
+  ctxS.fillStyle=COL.mut; ctxS.font='11px sans-serif'; ctxS.textAlign='left';
+  ctxS.fillText('心臓',x0,y0+15);
+  ctxS.textAlign='right'; ctxS.fillText('指先(SpO₂)',x1,y0+15);
+  ctxS.textAlign='left';
+}
+
+/* ---- ② 時間プロット: 指先の脈波 (2拍) ---- */
+let measSX=null, lastSpacePlot=null;
+let lastMetrics={}, measT=null, pins=[], lastTimePlot=null, ghosts=[];
+function drawTime(phaseNow){
+  const {w,h}=fit(cvTime); ctxT.clearRect(0,0,w,h);
+  const padL=30,padR=10,padT=12,padB=26;
+  const ecgBand=P.showECG?26:0;
+  const x0=padL,x1=w-padR,y0=h-padB,y1=padT+ecgBand;
+  const T=60/P.HR;
+  const span=2*T;                       // 2拍表示
+  const xf=P.measX;                      // 計測部位(心臓からの距離)
+  const base=t=>(P.showWK?wk(t):0);
+  // サンプリング
+  const N=360; const tf=[],pf=[],pb=[],ps=[],wkv=[],qf=[];
+  let pmin=1e9,pmax=-1e9,qmin=1e9,qmax=-1e9;
+  for(let i=0;i<=N;i++){ const t=i/N*span;
+    const bl=base(t), a=Pfwd(xf,t), b=Pbwd(xf,t); const s=bl+a+b, q=a-b;
+    tf.push(t);pf.push(bl+a);pb.push(bl+b);ps.push(s);wkv.push(bl);qf.push(q);
+    pmin=Math.min(pmin,s,bl); pmax=Math.max(pmax,s,bl+a,bl+b);
+    qmin=Math.min(qmin,q); qmax=Math.max(qmax,q);
+  }
+  const ymin=P.showWK?0:Math.min(0,pmin), ymax=P.showWK?Math.max(170,pmax*1.06):Math.max(pmax,1e-6)*1.1;
+  const X=t=> x0+(t/span)*(x1-x0);
+  const Y=v=> y0+((v-ymin)/(ymax-ymin))*(y1-y0);
+  lastTimePlot={x0,x1,span};            // マウス座標→時刻 変換用
+  // ECG ストリップ(上部バンド): R波 ≈ 駆出開始, 波の伝播の起点
+  if(P.showECG){
+    const ebMid=padT+ecgBand*0.6;
+    const gs=(u,m,s)=>{ const d=(u-m)/s; return Math.exp(-d*d); };
+    const ecg=u=> 0.13*gs(u,0.84,0.028) -0.07*gs(u,0.95,0.010)
+                 +1.0*(gs(u,0,0.010)+gs(u,1,0.010)) -0.22*gs(u,0.035,0.012) +0.25*gs(u,0.34,0.055);
+    ctxT.strokeStyle='rgba(120,255,170,.8)'; ctxT.lineWidth=1.3; ctxT.beginPath();
+    for(let i=0;i<=400;i++){ const t=i/400*span,u=mod(t,T)/T; const py=ebMid-ecg(u)*(ecgBand*0.5); const px=X(t); i?ctxT.lineTo(px,py):ctxT.moveTo(px,py); }
+    ctxT.stroke(); ctxT.lineWidth=1;
+    ctxT.fillStyle='rgba(120,255,170,.7)'; ctxT.font='9px sans-serif'; ctxT.textAlign='left'; ctxT.fillText('ECG（R波≈駆出開始）',x0,padT+8);
+  }
+  // grid + 目盛(mmHg)
+  ctxT.strokeStyle=COL.grid; ctxT.lineWidth=1; ctxT.fillStyle=COL.mut; ctxT.font='9px sans-serif'; ctxT.textAlign='right';
+  if(P.showWK){ for(const tk of [0,40,80,120,160]){ if(tk>ymax)continue; const py=Y(tk); ctxT.beginPath(); ctxT.moveTo(x0,py); ctxT.lineTo(x1,py); ctxT.stroke(); ctxT.fillText(tk,x0-4,py+3);} }
+  for(let k=0;k<=2;k++){ const px=X(k*T); ctxT.strokeStyle=COL.grid; ctxT.beginPath(); ctxT.moveTo(px,y1); ctxT.lineTo(px,y0); ctxT.stroke(); }
+  ctxT.beginPath(); ctxT.moveTo(x0,Y(ymin)); ctxT.lineTo(x1,Y(ymin)); ctxT.strokeStyle=COL.ax; ctxT.stroke();
+  const line=(arr,color,lw,dash)=>{ ctxT.setLineDash(dash||[]); ctxT.beginPath();
+    for(let i=0;i<=N;i++){ const px=X(tf[i]),py=Y(arr[i]); i?ctxT.lineTo(px,py):ctxT.moveTo(px,py);}
+    ctxT.strokeStyle=color; ctxT.lineWidth=lw; ctxT.stroke(); ctxT.setLineDash([]); };
+  // 反射波の寄与を淡く塗る(ベースラインからの上乗せ)
+  ctxT.globalAlpha=.16; ctxT.fillStyle=COL.bwd; ctxT.beginPath();
+  for(let i=0;i<=N;i++){ const px=X(tf[i]); i?ctxT.lineTo(px,Y(wkv[i])):ctxT.moveTo(px,Y(wkv[i])); }
+  for(let i=N;i>=0;i--){ ctxT.lineTo(X(tf[i]),Y(pb[i])); } ctxT.fill(); ctxT.globalAlpha=1;
+  // 重ね比較(ゴースト)
+  ghosts.forEach(gh=>{ ctxT.strokeStyle=gh.color; ctxT.globalAlpha=.6; ctxT.lineWidth=1.6; ctxT.setLineDash([5,3]); ctxT.beginPath();
+    for(let i=0;i<=N;i++){ const t=tf[i]; const u=mod(t,T)/T*(gh.arr.length-1); const k=Math.floor(u),f=u-k; const v=gh.arr[k]*(1-f)+gh.arr[Math.min(k+1,gh.arr.length-1)]*f; const px=X(t),py=Y(v); i?ctxT.lineTo(px,py):ctxT.moveTo(px,py);} ctxT.stroke(); ctxT.setLineDash([]); ctxT.globalAlpha=1; ctxT.lineWidth=1; });
+  if(P.showWK) line(wkv,'#7a8aa6',1.1,[3,3]);   // Windkessel(貯留)
+  line(pf,COL.fwd,1.5); line(pb,COL.bwd,1.5); line(ps,COL.sum,2.8);
+  // ゴースト凡例
+  ctxT.textAlign='right'; ctxT.font='10px sans-serif';
+  ghosts.forEach((gh,i)=>{ ctxT.fillStyle=gh.color; ctxT.fillText('▬ '+gh.label, x1-4, y1+12+i*12); });
+  ctxT.textAlign='left';
+  if(P.showFlow){ // 流量(別スケール) 圧は加算・流量は減算
+    ctxT.setLineDash([5,4]); ctxT.beginPath();
+    for(let i=0;i<=N;i++){ const py=y0 + ((qf[i]-qmin)/((qmax-qmin)||1))*(y1-y0)*0.92; i?ctxT.lineTo(X(tf[i]),py):ctxT.moveTo(X(tf[i]),py);}
+    ctxT.strokeStyle=COL.flow; ctxT.lineWidth=1.6; ctxT.stroke(); ctxT.setLineDash([]);
+  }
+  // 注釈: P1(前進波ピーク) / P2(反射波ピーク) / Δt / dicrotic notch
+  if(P.showAnno){
+    const c2=cPWV(), Te=Math.min(P.Tej,0.45*T);
+    const tP1=P.Larm/c2 + Te/2;
+    const tP2=(2*P.D+P.Larm)/c2 + Te/2;
+    const dt=2*P.D/c2*1000;
+    const sysR=dt < Te*1000*0.5;
+    const vline=(t,col)=>{ if(t<0||t>span)return; const px=X(t); ctxT.strokeStyle=col; ctxT.setLineDash([3,3]); ctxT.beginPath(); ctxT.moveTo(px,y1); ctxT.lineTo(px,y0); ctxT.stroke(); ctxT.setLineDash([]); };
+    vline(tP1,'rgba(255,174,122,.85)'); vline(tP2,'rgba(143,217,255,.9)');
+    ctxT.font='10px sans-serif'; ctxT.textAlign='center';
+    if(tP1<=span){ ctxT.fillStyle='#ffae7a'; ctxT.fillText('P1 前進波',X(tP1),y0-6); }
+    if(tP2<=span){ ctxT.fillStyle='#8fd9ff'; ctxT.fillText('P2 反射波',X(tP2),y0-6); }
+    if(tP2<=span){ const a=X(tP1),b=X(tP2),yy=y0-24; ctxT.strokeStyle='#cdd8ea'; ctxT.fillStyle='#cdd8ea'; ctxT.lineWidth=1;
+      ctxT.beginPath(); ctxT.moveTo(a,yy); ctxT.lineTo(b,yy); ctxT.stroke();
+      ctxT.beginPath(); ctxT.moveTo(a,yy);ctxT.lineTo(a+5,yy-3);ctxT.lineTo(a+5,yy+3);ctxT.closePath();ctxT.fill();
+      ctxT.beginPath(); ctxT.moveTo(b,yy);ctxT.lineTo(b-5,yy-3);ctxT.lineTo(b-5,yy+3);ctxT.closePath();ctxT.fill();
+      ctxT.fillText('反射の遅れ Δt = '+dt.toFixed(0)+' ms',(a+b)/2,yy-4);
+    }
+    if(!sysR && tP2<=span){ // 拡張期反射: くぼみ(dicrotic notch)を探す
+      let nmin=1e9,nt=tP1; for(let i=0;i<=60;i++){ const t=tP1+(tP2-tP1)*i/60; const v=base(t)+Pfwd(xf,t)+Pbwd(xf,t); if(v<nmin){nmin=v;nt=t;} }
+      const px=X(nt),py=Y(nmin); ctxT.fillStyle='#ffe14d'; ctxT.beginPath(); ctxT.arc(px,py,3,0,7); ctxT.fill();
+      ctxT.fillStyle='#cdd8ea'; ctxT.fillText('dicrotic notch',px,py-7);
+    }
+  }
+  // 現在位置カーソル
+  const pc=X(mod(phaseNow,span));
+  ctxT.strokeStyle='rgba(255,255,255,.55)'; ctxT.setLineDash([2,3]); ctxT.lineWidth=1.4;
+  ctxT.beginPath(); ctxT.moveTo(pc,y1); ctxT.lineTo(pc,y0); ctxT.stroke(); ctxT.setLineDash([]); ctxT.lineWidth=1;
+
+  // ---- フリーズ計測: ホバー読み取り + 2点キャリパー ----
+  const valAt=t=>{ const bl=base(t),a=Pfwd(xf,t),b=Pbwd(xf,t); return {bl,a,b,tot:bl+a+b}; };
+  const drawPick=(t,col,labChar)=>{ const px=X(t); ctxT.strokeStyle=col; ctxT.lineWidth=1; ctxT.setLineDash([]);
+    ctxT.beginPath(); ctxT.moveTo(px,y1); ctxT.lineTo(px,y0); ctxT.stroke();
+    const v=valAt(t); [[COL.fwd,v.bl+v.a],[COL.bwd,v.bl+v.b],[COL.sum,v.tot]].forEach(([c,val])=>{ ctxT.fillStyle=c; ctxT.beginPath(); ctxT.arc(px,Y(val),3,0,7); ctxT.fill(); });
+    if(labChar){ ctxT.fillStyle=col; ctxT.font='bold 11px sans-serif'; ctxT.textAlign='center'; ctxT.fillText(labChar,px,y1+10); }
+    return v; };
+  pins.forEach((t,i)=>drawPick(t,'#ff5db0',i?'B':'A'));
+  if(measT!=null){
+    const v=drawPick(measT,'#ffffff',null);
+    const lines=[ 't = '+(mod(measT,T)*1000).toFixed(0)+' ms',
+      '合成 '+v.tot.toFixed(0)+(P.showWK?' mmHg':''),
+      '前進 +'+v.a.toFixed(0)+' / 反射 +'+v.b.toFixed(0) ];
+    ctxT.font='10px sans-serif'; let bw=0; lines.forEach(l=>bw=Math.max(bw,ctxT.measureText(l).width)); bw+=12;
+    const bh=lines.length*13+8; let bx=X(measT)+8; if(bx+bw>x1)bx=X(measT)-bw-8; const by=y1+4;
+    ctxT.fillStyle='rgba(10,14,22,.92)'; ctxT.strokeStyle='#3a4a68'; ctxT.lineWidth=1;
+    ctxT.beginPath(); ctxT.rect(bx,by,bw,bh); ctxT.fill(); ctxT.stroke();
+    ctxT.textAlign='left'; lines.forEach((l,i)=>{ ctxT.fillStyle=i==1?'#ffe14d':'#cdd8ea'; ctxT.fillText(l,bx+6,by+14+i*13); });
+  }
+  if(pins.length==2){
+    const va=valAt(pins[0]),vb=valAt(pins[1]);
+    const dtms=Math.abs(pins[1]-pins[0])*1000, dP=vb.tot-va.tot;
+    const txt='Δt = '+dtms.toFixed(0)+' ms   ΔP = '+(dP>=0?'+':'')+dP.toFixed(0)+(P.showWK?' mmHg':'');
+    ctxT.font='bold 11px sans-serif'; const tw=ctxT.measureText(txt).width+14;
+    let bx=(X(pins[0])+X(pins[1]))/2 - tw/2; bx=Math.max(x0,Math.min(x1-tw,bx)); const by=y1+2;
+    ctxT.fillStyle='rgba(10,14,22,.92)'; ctxT.strokeStyle='#ff5db0'; ctxT.lineWidth=1;
+    ctxT.beginPath(); ctxT.rect(bx,by,tw,18); ctxT.fill(); ctxT.stroke();
+    ctxT.fillStyle='#ff9ed0'; ctxT.textAlign='left'; ctxT.fillText(txt,bx+7,by+13);
+  }
+
+  ctxT.fillStyle=COL.mut; ctxT.font='11px sans-serif'; ctxT.textAlign='left';
+  ctxT.fillText('時間 →（'+(T*1000|0)+' ms/拍）'+(P.showWK?'　縦軸: mmHg目安':'　縦軸: excess圧(波成分)'),x0,h-8);
+
+  /* ---- メトリクス(1拍で計算) ---- */
+  const M=400; let Psys=-1e9,Pfoot=1e9, iPfpk=0, Pfpk=-1e9;
+  const sarr=[];
+  for(let i=0;i<=M;i++){ const t=i/M*T; const bl=base(t), a=Pfwd(xf,t), b=Pbwd(xf,t), s=bl+a+b; sarr.push(s);
+    if(s>Psys)Psys=s; if(s<Pfoot)Pfoot=s; if(a>Pfpk){Pfpk=a;iPfpk=i;} }
+  const PP=Math.max(1e-6,Psys-Pfoot);
+  const MAP=Pfoot+PP/3;
+  const P1=sarr[iPfpk];                       // 前進波ピーク時の合成圧
+  const AIx=Math.max(-30,Math.min(99,(Psys-P1)/PP*100));
+  const dtRefl=2*P.D/cPWV()*1000;             // 反射の戻り遅れ(ms)
+  const Tej=Math.min(P.Tej,0.45*T)*1000;
+  const sysReflect = dtRefl < Tej*0.5;        // 反射ピークが収縮末期より前か
+  lastMetrics={AIx,dtRefl,sysReflect,Tej,Psys,Pfoot,MAP,PP};
+  const siteName = P.measX<0.2?'大動脈基部':(P.measX<0.6?'上腕':'指先SpO₂');
+  const mEl=document.getElementById('metrics');
+  mEl.innerHTML =
+    `<span>部位 <b>${siteName}</b></span>`+
+    (P.showWK?`<span>血圧(目安) <b>${Psys.toFixed(0)}/${Pfoot.toFixed(0)}</b> mmHg</span>`+
+              `<span>平均血圧 <b>${MAP.toFixed(0)}</b></span>`+
+              `<span>脈圧 <b>${PP.toFixed(0)}</b></span>`:'')+
+    `<span>反射の戻り遅れ <b>${dtRefl.toFixed(0)} ms</b></span>`+
+    `<span>近似 AIx <b>${AIx.toFixed(0)} %</b></span>`+
+    (sysReflect
+      ? `<span class="pill sys">反射が収縮期に戻る → 収縮期増大・後負荷↑（高齢/硬化型）</span>`
+      : `<span class="pill dia">反射が拡張期に戻る → dicrotic 波・冠灌流に有利（若年型）</span>`);
+}
+
+/* 現在の波形をゴーストとして保存(最大2本, 位相で整列) */
+function snapshotWave(){
+  const T=60/P.HR, G=120, arr=new Float32Array(G+1);
+  for(let i=0;i<=G;i++) arr[i]=Ptot(P.measX, i/G*T);
+  const siteName=P.measX<0.2?'大基部':(P.measX<0.6?'上腕':'指先');
+  ghosts.push({arr, label:`PWV${P.PWV.toFixed(0)} Γ${P.Gamma.toFixed(1)} ${siteName}`});
+  if(ghosts.length>2) ghosts.shift();
+  const cols=['#ff5db0','#b69cff']; ghosts.forEach((g,i)=>g.color=cols[i]);
+}
+
+/* ============================================================
+   3D シーン
+   ============================================================ */
+const sceneCv=document.getElementById('scene');
+const renderer=new THREE.WebGLRenderer({canvas:sceneCv,antialias:true,alpha:true});
+renderer.setClearColor(0x000000,0);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(45,1,0.1,200);
+
+/* --- 経路(模式的だが拍出方向・分岐は意識) --- */
+// 体路: 心臓→上行→弓部→下行→反射部位(下半身)
+const bodyPts=[
+  new THREE.Vector3(0.0, 0.0, 0.0),   // 心臓(大動脈起始)
+  new THREE.Vector3(0.05,1.5, 0.0),   // 上行大動脈(上向きに拍出)
+  new THREE.Vector3(-0.35,2.4,0.0),   // 弓部
+  new THREE.Vector3(-1.0,2.15,0.0),   // 弓部→下行
+  new THREE.Vector3(-1.05,0.6,0.0),   // 下行大動脈
+  new THREE.Vector3(-0.95,-1.3,0.0),  // 腹部
+  new THREE.Vector3(-0.85,-3.1,0.0),  // 反射部位(下半身/腸骨分岐)
+];
+// 腕路: 弓部(鎖骨下)→右肩→上腕→前腕→指先
+const armPts=[
+  new THREE.Vector3(-0.55,2.35,0.05), // 鎖骨下分岐(弓部から)
+  new THREE.Vector3(0.5,2.55,0.15),
+  new THREE.Vector3(1.5,2.25,0.30),   // 肩
+  new THREE.Vector3(2.35,1.35,0.45),  // 上腕
+  new THREE.Vector3(3.05,0.35,0.55),  // 肘
+  new THREE.Vector3(3.6,-0.6,0.62),   // 前腕
+  new THREE.Vector3(4.05,-1.45,0.66), // 手首
+  new THREE.Vector3(4.35,-2.0,0.68),  // 指先
+];
+// 頭路: 弓部(腕頭動脈/頸動脈)→頸部→頭蓋→脳
+const headPts=[
+  new THREE.Vector3(-0.15,2.45,0.0),  // 頸動脈起始(弓部から上向き)
+  new THREE.Vector3(0.0,3.1,0.0),
+  new THREE.Vector3(0.05,3.8,0.0),    // 頸部(頸動脈)
+  new THREE.Vector3(0.0,4.5,0.0),     // 頭蓋底
+  new THREE.Vector3(0.0,5.05,0.0),    // 脳
+];
+// 左下肢: 腸骨分岐→大腿→膝→下腿→足
+const legLPts=[
+  new THREE.Vector3(-0.85,-3.1,0.0),  // 腸骨分岐
+  new THREE.Vector3(-1.25,-3.7,0.1),  // 鼠径
+  new THREE.Vector3(-1.4,-4.9,0.15),  // 大腿
+  new THREE.Vector3(-1.42,-6.0,0.2),  // 膝
+  new THREE.Vector3(-1.38,-7.0,0.25), // 下腿
+  new THREE.Vector3(-1.35,-7.7,0.45), // 足
+];
+// 右下肢: 鏡像
+const legRPts=[
+  new THREE.Vector3(-0.85,-3.1,0.0),
+  new THREE.Vector3(-0.45,-3.7,0.1),
+  new THREE.Vector3(-0.3,-4.9,0.15),
+  new THREE.Vector3(-0.28,-6.0,0.2),
+  new THREE.Vector3(-0.32,-7.0,0.25),
+  new THREE.Vector3(-0.35,-7.7,0.45),
+];
+const bodyCurve=new THREE.CatmullRomCurve3(bodyPts,false,'catmullrom',0.5);
+const armCurve =new THREE.CatmullRomCurve3(armPts,false,'catmullrom',0.5);
+const headCurve=new THREE.CatmullRomCurve3(headPts,false,'catmullrom',0.5);
+const legLCurve=new THREE.CatmullRomCurve3(legLPts,false,'catmullrom',0.5);
+const legRCurve=new THREE.CatmullRomCurve3(legRPts,false,'catmullrom',0.5);
+
+function vessel(curve,radius){
+  const geo=new THREE.TubeGeometry(curve,160,radius,16,false);
+  const mat=new THREE.MeshBasicMaterial({color:0xb3324a,transparent:true,opacity:0.16,side:THREE.DoubleSide,depthWrite:false});
+  const m=new THREE.Mesh(geo,mat); scene.add(m);
+  // 内側のうっすら明るい層(立体感)
+  const geo2=new THREE.TubeGeometry(curve,160,radius*0.6,12,false);
+  const mat2=new THREE.MeshBasicMaterial({color:0xff5d77,transparent:true,opacity:0.07,depthWrite:false});
+  scene.add(new THREE.Mesh(geo2,mat2));
+  return m;
+}
+vessel(bodyCurve,0.16);
+vessel(armCurve,0.11);
+vessel(headCurve,0.085);
+vessel(legLCurve,0.10);
+vessel(legRCurve,0.10);
+
+/* 頭(頭蓋＋脳) */
+const headPt=headCurve.getPointAt(1);
+const skull=new THREE.Mesh(new THREE.SphereGeometry(0.62,24,18),
+  new THREE.MeshBasicMaterial({color:0xb3324a,transparent:true,opacity:0.13,depthWrite:false}));
+skull.position.copy(headPt); skull.position.y+=0.15; scene.add(skull);
+const brain=new THREE.Mesh(new THREE.SphereGeometry(0.4,20,16),
+  new THREE.MeshBasicMaterial({color:0xff5d77,transparent:true,opacity:0.10,depthWrite:false}));
+brain.position.copy(skull.position); scene.add(brain);
+const brainGlow=new THREE.Mesh(new THREE.SphereGeometry(0.3,16,12),
+  new THREE.MeshBasicMaterial({color:0xff7a3c,transparent:true,opacity:0.0,blending:THREE.AdditiveBlending}));
+brainGlow.position.copy(skull.position); scene.add(brainGlow);
+
+/* 心臓 */
+const heart=new THREE.Group();
+const hmat=new THREE.MeshBasicMaterial({color:0xc0303f,transparent:true,opacity:0.6});
+const h1=new THREE.Mesh(new THREE.SphereGeometry(0.55,24,18),hmat);
+const h2=new THREE.Mesh(new THREE.SphereGeometry(0.42,24,18),hmat); h2.position.set(0.3,-0.25,0.1);
+heart.add(h1,h2); heart.position.set(0,0,0); scene.add(heart);
+const hcore=new THREE.Mesh(new THREE.SphereGeometry(0.3,18,14),new THREE.MeshBasicMaterial({color:0xff7a3c,transparent:true,opacity:0.0,blending:THREE.AdditiveBlending}));
+heart.add(hcore);
+
+/* 反射部位マーカー */
+const reflPt=bodyCurve.getPointAt(1);
+const reflRing=new THREE.Mesh(new THREE.TorusGeometry(0.28,0.05,10,28),
+  new THREE.MeshBasicMaterial({color:0xffd166,transparent:true,opacity:0.5}));
+reflRing.position.copy(reflPt); scene.add(reflRing);
+
+/* 指先 SpO2 センサー */
+const fingerPt=armCurve.getPointAt(1);
+const sensor=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.32,0.5),
+  new THREE.MeshBasicMaterial({color:0x14304a,transparent:true,opacity:0.55}));
+sensor.position.copy(fingerPt); scene.add(sensor);
+const sensorGlow=new THREE.Mesh(new THREE.SphereGeometry(0.18,16,12),
+  new THREE.MeshBasicMaterial({color:0x3cc8ff,transparent:true,opacity:0.0,blending:THREE.AdditiveBlending}));
+sensorGlow.position.copy(fingerPt); scene.add(sensorGlow);
+
+/* 計測点マーカー(計測部位を心臓→腕の経路上に表示) */
+const measRing=new THREE.Mesh(new THREE.TorusGeometry(0.2,0.05,10,24),
+  new THREE.MeshBasicMaterial({color:0x9fe0ff,transparent:true,opacity:0.85}));
+scene.add(measRing);
+function measPoint(x){
+  if(x<=P.dBranch) return bodyCurve.getPointAt(Math.max(0,Math.min(1,x/P.D)));
+  return armCurve.getPointAt(Math.max(0,Math.min(1,(x-P.dBranch)/(P.Larm-P.dBranch))));
+}
+function updateMeasRing(){ measRing.position.copy(measPoint(P.measX)); }
+updateMeasRing();
+
+/* 波パケット用スプライト・プール(加算合成の光球) */
+function makeGlowTexture(){
+  const s=64,c=document.createElement('canvas');c.width=c.height=s;const g2=c.getContext('2d');
+  const grd=g2.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
+  grd.addColorStop(0,'rgba(255,255,255,1)');grd.addColorStop(0.3,'rgba(255,255,255,.7)');grd.addColorStop(1,'rgba(255,255,255,0)');
+  g2.fillStyle=grd;g2.fillRect(0,0,s,s);const t=new THREE.Texture(c);t.needsUpdate=true;return t;
+}
+const glowTex=makeGlowTexture();
+const POOL=80; const packets=[];
+for(let i=0;i<POOL;i++){
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,opacity:0}));
+  sp.scale.set(0.5,0.5,0.5); scene.add(sp); packets.push(sp);
+}
+function useGlow(i,pos,color,strength,size){
+  const sp=packets[i]; sp.position.copy(pos); sp.material.color.set(color);
+  sp.material.opacity=Math.max(0,Math.min(1,strength)); sp.scale.setScalar(size); sp.visible=strength>0.02;
+}
+
+/* 血球(ゆっくり) */
+const blood=[]; const bloodMat=new THREE.MeshBasicMaterial({color:0x8a2b3e});
+function spawnBlood(curve,n){ for(let i=0;i<n;i++){ const m=new THREE.Mesh(new THREE.SphereGeometry(0.07,8,6),bloodMat);
+  m.userData={curve,u:Math.random()}; scene.add(m); blood.push(m);} }
+spawnBlood(bodyCurve,16); spawnBlood(armCurve,14); spawnBlood(headCurve,8); spawnBlood(legLCurve,12); spawnBlood(legRCurve,12);
+
+/* ---------- カメラ & 簡易オービット(なめらかフォーカス) ---------- */
+let camR=21, camTheta=0.5, camPhi=1.32, target=new THREE.Vector3(-0.3,-1.0,0);
+let camRGoal=camR, targetGoal=target.clone(), camThetaGoal=camTheta, camPhiGoal=camPhi;
+const VIEWS={
+  all:   {t:new THREE.Vector3(-0.3,-1.0,0), r:21, th:0.5,  ph:1.32},
+  heart: {t:new THREE.Vector3(0.1,0.4,0),   r:5.5,th:0.45, ph:1.25},
+  head:  {t:()=>skull.position,              r:4.5,th:0.4,  ph:1.2},
+  legs:  {t:new THREE.Vector3(-0.85,-5.0,0), r:9, th:0.5,  ph:1.45},
+  finger:{t:()=>fingerPt,                    r:3.2,th:0.7,  ph:1.25},
+};
+function focusView(name){ const v=VIEWS[name]; if(!v)return;
+  targetGoal.copy(typeof v.t==='function'?v.t():v.t); camRGoal=v.r; camThetaGoal=v.th; camPhiGoal=v.ph;
+  document.querySelectorAll('.viewbtn').forEach(b=>b.classList.toggle('on',b.dataset.v===name)); }
+function updateCam(){
+  target.lerp(targetGoal,0.12);
+  camR+=(camRGoal-camR)*0.12; camTheta+=(camThetaGoal-camTheta)*0.12; camPhi+=(camPhiGoal-camPhi)*0.12;
+  camera.position.set(
+  target.x+camR*Math.sin(camPhi)*Math.sin(camTheta),
+  target.y+camR*Math.cos(camPhi),
+  target.z+camR*Math.sin(camPhi)*Math.cos(camTheta));
+  camera.lookAt(target); }
+let drag=false,lx=0,ly=0;
+sceneCv.addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;sceneCv.setPointerCapture(e.pointerId);});
+sceneCv.addEventListener('pointerup',()=>drag=false);
+sceneCv.addEventListener('pointermove',e=>{ if(!drag)return; camThetaGoal-=(e.clientX-lx)*0.008; camPhiGoal=Math.max(0.2,Math.min(2.8,camPhiGoal-(e.clientY-ly)*0.008)); lx=e.clientX;ly=e.clientY; });
+sceneCv.addEventListener('wheel',e=>{e.preventDefault(); camRGoal=Math.max(2.2,Math.min(30,camRGoal*(1+Math.sign(e.deltaY)*0.08)));},{passive:false});
+
+/* ---------- ラベル投影 ---------- */
+const tagHeart=document.getElementById('tagHeart'),tagFinger=document.getElementById('tagFinger'),tagRefl=document.getElementById('tagRefl'),tagHead=document.getElementById('tagHead');
+function projectTag(el,vec3){ const v=vec3.clone().project(camera);
+  const r=sceneCv.getBoundingClientRect();
+  const x=(v.x*0.5+0.5)*r.width, y=(-v.y*0.5+0.5)*r.height;
+  const vis=v.z<1;
+  el.style.display=vis?'block':'none'; el.style.left=x+'px'; el.style.top=y+'px'; }
+
+/* ---------- リサイズ ---------- */
+function resize(){ const r=sceneCv.getBoundingClientRect();
+  renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+  renderer.setSize(r.width,r.height,false); camera.aspect=r.width/r.height; camera.updateProjectionMatrix(); }
+window.addEventListener('resize',resize);
+
+/* ============================================================
+   アニメーション
+   ============================================================ */
+let simT=0, last=performance.now(), scrubEl=null;
+function frame(now){
+  const dtReal=(now-last)/1000; last=now;
+  if(!P.paused) simT += dtReal*P.speed;
+  const T=60/P.HR, c=cPWV();
+  if(!P.paused && scrubEl) scrubEl.value=(mod(simT,T)/T*1000)|0;   // 再生中はスクラブが追従
+
+  /* --- 心臓拍動 --- */
+  const drive=g(simT)/Math.max(0.2,P.SV);   // 0..~1
+  const sc=1-0.12*drive; heart.scale.set(sc,sc,sc);
+  hcore.material.opacity=0.5*drive;
+
+  /* --- 波パケット(直近2拍ぶん) --- */
+  let pi=0;
+  const beat0=Math.floor(simT/T);
+  for(let bk=beat0-1;bk<=beat0;bk++){
+    const tBeat=bk*T; const tau=simT-tBeat; if(tau<0) continue;
+    const s=c*tau;                                  // 心臓から進んだ距離(m)
+    const amp=P.SV;
+    // 前進: 体路
+    if(s<=P.D+0.02){ const f=Math.min(1,s/P.D); if(pi<POOL) useGlow(pi++,bodyCurve.getPointAt(f),0xff7a3c,0.9*amp,0.55+0.5*Math.sin(Math.PI*f)); }
+    // 前進: 腕路(分岐到達後)
+    if(s>=P.dBranch){ const f=Math.min(1,(s-P.dBranch)/(P.Larm-P.dBranch)); if(f<1 && pi<POOL) useGlow(pi++,armCurve.getPointAt(f),0xff7a3c,0.9*amp,0.5+0.45*Math.sin(Math.PI*f)); }
+    // 反射: 体路を心臓側へ戻る
+    if(s>P.D){ const sb=s-P.D; const f=Math.max(0,1-sb/P.D); if(sb<=P.D && pi<POOL) useGlow(pi++,bodyCurve.getPointAt(f),0x3cc8ff,0.9*amp*P.Gamma,0.5+0.4*Math.sin(Math.PI*f)); }
+    // 反射: 腕路を指先へ
+    if(s>2*P.D){ const sa=s-2*P.D; const f=Math.min(1,sa/(P.Larm-P.dBranch)); if(sa<=(P.Larm-P.dBranch) && pi<POOL) useGlow(pi++,armCurve.getPointAt(f),0x3cc8ff,0.9*amp*P.Gamma,0.45+0.4*Math.sin(Math.PI*f)); }
+    // 再反射(2次): さらに遅れて弱く戻る(多重反射ON時)
+    if(P.multi && s>4*P.D){ const sa=s-4*P.D; const f=Math.min(1,sa/(P.Larm-P.dBranch)); if(sa<=(P.Larm-P.dBranch) && pi<POOL) useGlow(pi++,armCurve.getPointAt(f),0x6fb8e0,0.9*amp*P.Gamma*P.Gamma*P.gammaProx,0.34+0.28*Math.sin(Math.PI*f)); }
+    // 前進: 頭路(頸動脈分岐到達後)
+    if(s>=P.dHeadBranch){ const f=Math.min(1,(s-P.dHeadBranch)/(P.Lhead-P.dHeadBranch)); if(f<1 && pi<POOL) useGlow(pi++,headCurve.getPointAt(f),0xff7a3c,0.9*amp,0.42+0.38*Math.sin(Math.PI*f)); }
+    // 反射: 頭路を心臓側へ戻る(脳血管は低抵抗 → 反射小)
+    const gH=0.45*P.Gamma;
+    if(s>P.Lhead){ const sh=s-P.Lhead; const f=Math.max(0,1-sh/(P.Lhead-P.dHeadBranch)); if(sh<=(P.Lhead-P.dHeadBranch) && pi<POOL) useGlow(pi++,headCurve.getPointAt(f),0x3cc8ff,0.9*amp*gH,0.38+0.32*Math.sin(Math.PI*f)); }
+    // 前進: 両下肢(腸骨分岐=距離D を越えてから足先へ)
+    if(s>=P.D){ const f=Math.min(1,(s-P.D)/P.Lleg);
+      if(f<1 && pi<POOL) useGlow(pi++,legLCurve.getPointAt(f),0xff7a3c,0.9*amp,0.42+0.4*Math.sin(Math.PI*f));
+      if(f<1 && pi<POOL) useGlow(pi++,legRCurve.getPointAt(f),0xff7a3c,0.9*amp,0.42+0.4*Math.sin(Math.PI*f)); }
+    // 反射: 足先(下肢終末)から戻る → 主反射に寄与
+    if(s>P.D+P.Lleg){ const sl=s-(P.D+P.Lleg); const f=Math.max(0,1-sl/P.Lleg);
+      if(sl<=P.Lleg && pi<POOL) useGlow(pi++,legLCurve.getPointAt(f),0x3cc8ff,0.9*amp*P.Gamma,0.4+0.34*Math.sin(Math.PI*f));
+      if(sl<=P.Lleg && pi<POOL) useGlow(pi++,legRCurve.getPointAt(f),0x3cc8ff,0.9*amp*P.Gamma,0.4+0.34*Math.sin(Math.PI*f)); }
+  }
+  for(;pi<POOL;pi++) packets[pi].visible=false, packets[pi].material.opacity=0;
+
+  /* 反射部位 / センサー / 脳 の点灯 (生波で正規化) */
+  reflRing.material.opacity=0.35+0.5*Math.max(0,gf(P.D,simT))/Math.max(.2,P.SV);
+  sensorGlow.material.opacity=Math.max(0,(gf(P.Larm,simT)+gb(P.Larm,simT)))/Math.max(.2,P.SV)*0.85;
+  brainGlow.material.opacity=Math.max(0,gf(P.Lhead,simT))/Math.max(.2,P.SV)*0.5;
+
+  /* --- 血球(ゆっくり) --- */
+  const bloodSpeed=0.18; // u/s相当(見た目)
+  for(const m of blood){ m.visible=P.showBlood; if(!P.showBlood) continue;
+    m.userData.u=(m.userData.u + dtReal*P.speed*bloodSpeed* (0.4+0.9*Math.max(0,drive)))%1;
+    m.position.copy(m.userData.curve.getPointAt(m.userData.u)); }
+
+  if(P.autorot && !drag) camThetaGoal+=dtReal*0.25;
+  updateCam(); renderer.render(scene,camera);
+  projectTag(tagHeart,new THREE.Vector3(0.2,0.2,0));
+  projectTag(tagFinger,fingerPt); projectTag(tagRefl,reflPt); projectTag(tagHead,skull.position);
+
+  /* --- 2D --- */
+  drawSpace(simT);
+  drawTime(simT);
+
+  requestAnimationFrame(frame);
+}
+
+/* ============================================================
+   UI 配線
+   ============================================================ */
+function bind(id,key,fmt,scale){ const el=document.getElementById(id), out=document.getElementById('v'+id);
+  const upd=()=>{ let val=parseFloat(el.value); P[key]= scale?scale(val):val; out.textContent=fmt?fmt(val):val; wkDirty=true; };
+  el.addEventListener('input',upd); upd(); }
+bind('HR','HR',v=>v.toFixed(0));
+bind('PWV','PWV',v=>v.toFixed(1));
+bind('G','Gamma',v=>v.toFixed(2));
+bind('D','D',v=>v.toFixed(2));
+bind('SV','SV',v=>v.toFixed(0),v=>v/100);
+bind('Tej','Tej',v=>v.toFixed(0),v=>v/1000);
+bind('Gp','gammaProx',v=>v.toFixed(2));
+bind('Spd','speed',v=>v.toFixed(2));
+document.getElementById('ckWK').addEventListener('change',e=>{P.showWK=e.target.checked; wkDirty=true;});
+document.getElementById('ckFlow').addEventListener('change',e=>P.showFlow=e.target.checked);
+document.getElementById('ckBlood').addEventListener('change',e=>P.showBlood=e.target.checked);
+document.getElementById('ckAnno').addEventListener('change',e=>P.showAnno=e.target.checked);
+document.getElementById('ckMulti').addEventListener('change',e=>{P.multi=e.target.checked;});
+document.getElementById('ckECG').addEventListener('change',e=>{P.showECG=e.target.checked;});
+document.getElementById('ckRot').addEventListener('change',e=>{P.autorot=e.target.checked;});
+
+/* --- 計測部位セレクタ --- */
+document.querySelectorAll('.sitebtn').forEach(b=>b.addEventListener('click',()=>{
+  P.measX=parseFloat(b.dataset.x); updateMeasRing();
+  document.querySelectorAll('.sitebtn').forEach(x=>x.classList.toggle('on',x===b)); pins=[]; }));
+
+/* --- フリーズ計測(②波形のホバー/クリック) --- */
+function evtToT(e){ if(!lastTimePlot)return null; const r=cvTime.getBoundingClientRect();
+  const xcss=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const t=(xcss-lastTimePlot.x0)/(lastTimePlot.x1-lastTimePlot.x0)*lastTimePlot.span;
+  return (t<0||t>lastTimePlot.span)?null:t; }
+cvTime.addEventListener('mousemove',e=>{ measT=evtToT(e); });
+cvTime.addEventListener('mouseleave',()=>{ measT=null; });
+cvSpace.addEventListener('mousemove',e=>{ if(!lastSpacePlot)return; const r=cvSpace.getBoundingClientRect();
+  const d=(e.clientX-r.left-lastSpacePlot.x0)/(lastSpacePlot.x1-lastSpacePlot.x0)*lastSpacePlot.Larm;
+  measSX=(d<0||d>lastSpacePlot.Larm)?null:d; });
+cvSpace.addEventListener('mouseleave',()=>{ measSX=null; });
+cvTime.addEventListener('click',e=>{ const t=evtToT(e); if(t==null)return; if(pins.length>=2)pins=[]; pins.push(t); });
+document.getElementById('tClear').addEventListener('click',()=>{ pins=[]; });
+document.getElementById('tSnap').addEventListener('click',()=>{ snapshotWave(); });
+document.getElementById('tSnapClear').addEventListener('click',()=>{ ghosts=[]; });
+
+/* --- 再生トランスポート --- */
+scrubEl=document.getElementById('scrub');
+const tPlay=document.getElementById('tPlay');
+function setPaused(v){ P.paused=v; tPlay.textContent=v?'▶ 再生':'⏸ 停止'; }
+tPlay.addEventListener('click',()=>setPaused(!P.paused));
+function scrubTo(frac){ const T=60/P.HR; simT=6*T+frac*T; }   // 直前拍の反射も含めて表示
+scrubEl.addEventListener('input',e=>{ setPaused(true); scrubTo(parseInt(e.target.value)/1000); });
+document.getElementById('tStepF').addEventListener('click',()=>{ setPaused(true); simT+=0.010; });
+document.getElementById('tStepB').addEventListener('click',()=>{ setPaused(true); simT-=0.010; });
+
+/* --- 視点フォーカス --- */
+document.querySelectorAll('.viewbtn').forEach(b=>b.addEventListener('click',()=>focusView(b.dataset.v)));
+
+const presets={
+  young:{HR:62,PWV:5.5,Gamma:0.5,D:0.58,SV:1.0,Tej:0.31},
+  mid:  {HR:72,PWV:8.0,Gamma:0.6,D:0.55,SV:1.0,Tej:0.29},
+  old:  {HR:74,PWV:12.0,Gamma:0.72,D:0.55,SV:0.95,Tej:0.27},
+  vaso: {HR:96,PWV:7.0,Gamma:0.22,D:0.5,SV:0.85,Tej:0.26},
+  hypo: {HR:118,PWV:6.5,Gamma:0.8,D:0.5,SV:0.5,Tej:0.23},   // 出血・低容量(頻脈/血管収縮/低拍出)
+  exer: {HR:125,PWV:8.5,Gamma:0.18,D:0.55,SV:1.3,Tej:0.21}, // 運動(高拍出/筋血管拡張)
+};
+function applyPreset(name){ const p=presets[name]; if(!p)return;
+  const set=(id,val)=>{const el=document.getElementById(id); el.value=val; el.dispatchEvent(new Event('input'));};
+  set('HR',p.HR); set('PWV',p.PWV); set('G',p.Gamma); set('D',p.D); set('SV',Math.round(p.SV*100)); set('Tej',Math.round(p.Tej*1000));
+  document.querySelectorAll('.pre').forEach(b=>b.classList.toggle('active',b.dataset.p===name));
+}
+document.querySelectorAll('.pre').forEach(b=>b.addEventListener('click',()=>applyPreset(b.dataset.p)));
+
+document.getElementById('infoBtn').addEventListener('click',()=>document.getElementById('info').classList.add('show'));
+document.getElementById('infoClose').addEventListener('click',()=>document.getElementById('info').classList.remove('show'));
+document.getElementById('info').addEventListener('click',e=>{ if(e.target.id==='info') e.target.classList.remove('show'); });
+
+/* 起動 */
+resize(); updateCam(); applyPreset('young');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
