@@ -1,7 +1,15 @@
 # blood-flow-sim — 血流・脈波シミュレーター
 
 前進波と反射波が末梢（指先 SpO₂）で合成され、脈波ができる様子を可視化する教育用シミュレーター。
-単一HTMLファイル。`index.html` をブラウザでダブルクリックするだけで起動（インストール不要、Three.js は CDN 読み込み）。
+単一HTML＋同梱の `three.min.js`。`index.html` をダブルクリックで起動（インストール不要・完全オフライン）。
+
+## iPhone / iPad・他デバイスで使う（PWA）
+
+公開URL（PWA）: **https://nobumitsu-3141.github.io/blood-flow-sim/**
+
+- iPhone/iPad：Safari で上記URL（または `qr-blood-flow-sim.png` を読み取り）→ 共有ボタン → **「ホーム画面に追加」**。以後はアイコンから起動し、**オフラインで動作**（Service Worker がキャッシュ）。
+- Mac/Windows：同URLをブラウザで開くだけ。ローカルで使うなら `index.html` をダブルクリック。
+- 更新：アプリ側で新版を push → 端末は次回オンライン起動時に自動更新（`controllerchange` 自動リロード＋`sw.js` の `CACHE` 版数を上げる）。反映されない端末は一度削除→再追加。
 
 ## 主な機能
 - **3D 全身動脈ツリー**（透明血管）：心臓→大動脈→腸骨分岐（主要反射部位）→両脚、鎖骨下→上腕→指先 SpO₂、頸動脈→頭/脳。前進波（オレンジ）・反射波（シアン）・血球（ゆっくり）。
