@@ -2,8 +2,15 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>血流シミュレーター — 前進波・反射波と脈波の成り立ち</title>
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#0a0e16" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="血流sim" />
 <style>
   :root{
     --bg:#0a0e16; --panel:#121826; --panel2:#0e1421; --ink:#e8eef7; --muted:#90a0b8;
@@ -238,7 +245,7 @@
   <p>教育目的のため、反射は実効的な単一反射部位に集約し、Windkessel の拡張期ランオフなどは簡略化しています。<b>頭（脳）への上行・脳血管からの反射は3Dの可視化用</b>で、指先の波形計算には主要反射部位（下半身）の反射のみを用いています（脳は低抵抗で反射が小さいため）。波形の「形と成り立ち」を直感的に掴むためのモデルで、個別の数値予測用ではありません。</p>
 </div></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="./three.min.js"></script>
 <script>
 /* ============================================================
    血流シミュレーター
@@ -877,6 +884,22 @@ document.getElementById('info').addEventListener('click',e=>{ if(e.target.id==='
 /* 起動 */
 resize(); updateCam(); applyPreset('young');
 requestAnimationFrame(frame);
+</script>
+
+<!-- PWA: service worker 登録（更新を自動反映） -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      reg.update();
+      setInterval(() => reg.update(), 60 * 60 * 1000);
+    }).catch(() => {});
+  });
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return; reloaded = true; window.location.reload();
+  });
+}
 </script>
 </body>
 </html>
