@@ -1,5 +1,5 @@
 /* 血流・脈波シミュレーター — service worker (network-first, cache fallback for offline) */
-const CACHE = 'bloodflow-v1';
+const CACHE = 'bloodflow-v2';
 const ASSETS = [
   './',
   'index.html',
@@ -20,7 +20,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('bloodflow-') && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
